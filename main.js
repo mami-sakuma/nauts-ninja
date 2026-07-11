@@ -61,8 +61,10 @@ const fragmentShader = `
 `;
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const HOVER_DURATION = 5600;
+const HOVER_DURATION = 2800;
 const LEAVE_DURATION = 900;
+const SMOKE_PLAYBACK_RATE = 4.0;
+const SMOKE_POOL_SIZE = 6;
 const SMOKE_TOP_EXTENSION = 1.06;
 const SMOKE_SIDE_EXTENSION = 1.06;
 function discoverPlaceholders() {
@@ -106,25 +108,35 @@ renderer.toneMappingExposure = 1;
 
 const items = [];
 let lastFrameTime = performance.now();
+let activeSmokeItem = null;
 
-function createSmokeVideoTexture() {
+function createSmokeVideoTexture(instanceIndex = 0) {
   const video = document.createElement("video");
   video.loop = true;
   video.muted = true;
   video.playsInline = true;
-  video.playbackRate = 2.0;
+  video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+  video.playbackRate = SMOKE_PLAYBACK_RATE;
   video.autoplay = false;
   video.preload = "auto";
   video.crossOrigin = "anonymous";
   video.setAttribute("muted", "");
   video.setAttribute("playsinline", "");
   video.setAttribute("preload", "auto");
-  video.style.display = "none";
+  video.disablePictureInPicture = true;
+  video.style.position = "fixed";
+  video.style.left = "-9999px";
+  video.style.top = "-9999px";
+  video.style.width = "1px";
+  video.style.height = "1px";
+  video.style.opacity = "0";
+  video.style.pointerEvents = "none";
 
   const source = document.createElement("source");
-  source.src = "./images/smoke.mp4";
+  source.src = `./images/smoke-${(instanceIndex % SMOKE_POOL_SIZE) + 1}.mp4`;
   source.type = "video/mp4";
   video.appendChild(source);
+  document.body.appendChild(video);
   video.load();
 
   const texture = new THREE.VideoTexture(video);
@@ -134,6 +146,13 @@ function createSmokeVideoTexture() {
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   video.addEventListener("loadeddata", () => {
+    video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+    video.playbackRate = SMOKE_PLAYBACK_RATE;
+    texture.needsUpdate = true;
+  });
+  video.addEventListener("canplay", () => {
+    video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+    video.playbackRate = SMOKE_PLAYBACK_RATE;
     texture.needsUpdate = true;
   });
   video.addEventListener("timeupdate", () => {
@@ -143,7 +162,53 @@ function createSmokeVideoTexture() {
   return { video, texture };
 }
 
-const sharedSmokeVideo = createSmokeVideoTexture();
+const smokeSlots = Array.from({ length: SMOKE_POOL_SIZE }, (_, index) => ({
+  ...createSmokeVideoTexture(index),
+  item: null
+}));
+
+function acquireSmokeSlot(item) {
+  if (item.smokeVideo) {
+    return item.smokeVideo;
+  }
+
+  let slot = smokeSlots.find((candidate) => candidate.item === null);
+  if (!slot) {
+    slot = {
+      ...createSmokeVideoTexture(smokeSlots.length),
+      item: null
+    };
+    smokeSlots.push(slot);
+  }
+
+  slot.item = item;
+  item.smokeVideo = slot;
+  item.uniforms.u_smokeTex.value = slot.texture;
+  item.uniforms.u_videoAspect.value = getVideoAspect(slot.video);
+  return slot;
+}
+
+function releaseSmokeSlot(item) {
+  const slot = item.smokeVideo;
+  if (!slot) {
+    return;
+  }
+
+  slot.video.pause();
+  slot.video.currentTime = 0;
+  slot.texture.needsUpdate = true;
+  slot.item = null;
+  item.smokeVideo = null;
+}
+
+function isSmokeCutoffReached(video) {
+  const cutoffTime = getSmokeCutoffTime(video);
+  return cutoffTime > 0 && video.currentTime >= cutoffTime;
+}
+
+function getSmokeCutoffTime(video) {
+  return Number.isFinite(video.duration) && video.duration > 2.5 ? video.duration - 2.5 : 0;
+}
 
 function getVideoAspect(video) {
   return video.videoWidth > 0 && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 1;
@@ -154,29 +219,38 @@ function trimSmokeCredits(item) {
   if (!Number.isFinite(video.duration) || video.duration <= 2.5) {
     return;
   }
-  if (video.currentTime >= video.duration - 2.5) {
+  const cutoffTime = getSmokeCutoffTime(video);
+  if (video.currentTime >= cutoffTime) {
     video.pause();
-    video.currentTime = Math.max(0, video.duration - 2.55);
+    video.currentTime = Math.max(0, cutoffTime);
   }
 }
 
-function playSmokeVideo(item) {
+function playSmokeVideo(item, restart = true) {
   const { video, texture } = item.smokeVideo;
-  video.playbackRate = 2.0;
+  video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+  video.playbackRate = SMOKE_PLAYBACK_RATE;
   if (video.readyState === 0) {
     video.load();
   }
-  try {
-    video.currentTime = 0;
-  } catch (error) {
-    video.addEventListener("loadedmetadata", () => {
+  if (restart) {
+    try {
       video.currentTime = 0;
-    }, { once: true });
+    } catch (error) {
+      video.addEventListener("loadedmetadata", () => {
+        video.currentTime = 0;
+      }, { once: true });
+    }
   }
   texture.needsUpdate = true;
   const playRequest = video.play();
   if (playRequest) {
-    playRequest.catch(() => {});
+    playRequest
+      .then(() => {
+        video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+        video.playbackRate = SMOKE_PLAYBACK_RATE;
+      })
+      .catch(() => {});
   }
 }
 
@@ -255,21 +329,18 @@ function getHoverImageCandidates(src) {
   const cleanSrc = queryIndex === -1 ? src : src.slice(0, queryIndex);
   const suffix = queryIndex === -1 ? "" : src.slice(queryIndex);
   const extensionIndex = cleanSrc.lastIndexOf(".");
+  const slashIndex = cleanSrc.lastIndexOf("/");
 
-  if (extensionIndex === -1 || extensionIndex < cleanSrc.lastIndexOf("/")) {
-    return [`${cleanSrc}-2${suffix}`, `${cleanSrc}2${suffix}`];
+  if (extensionIndex === -1 || extensionIndex < slashIndex) {
+    return [`${cleanSrc}2${suffix}`];
   }
 
   const base = cleanSrc.slice(0, extensionIndex);
   const extension = cleanSrc.slice(extensionIndex + 1);
-  const candidates = [
-    `${base}-2.${extension}${suffix}`,
-    `${base}2.${extension}${suffix}`
-  ];
+  const candidates = [`${base}2.${extension}${suffix}`];
 
   for (const candidateExtension of HOVER_IMAGE_EXTENSIONS) {
     if (candidateExtension !== extension.toLowerCase()) {
-      candidates.push(`${base}-2.${candidateExtension}${suffix}`);
       candidates.push(`${base}2.${candidateExtension}${suffix}`);
     }
   }
@@ -290,8 +361,11 @@ function preloadHoverImage(item) {
     hoverImage.onload = () => {
       item.hoverImageSrc = candidate;
       item.hoverImageStatus = "ready";
-      if (item.target === 1 && item.image) {
-        item.image.src = item.hoverImageSrc;
+      if (item.hoverLayer) {
+        item.hoverLayer.src = item.hoverImageSrc;
+      }
+      if (item.target === 1) {
+        showHoverImage(item);
       }
     };
     hoverImage.onerror = () => {
@@ -306,6 +380,42 @@ function preloadHoverImage(item) {
   };
 
   tryNextCandidate();
+}
+
+function createHoverLayer(image) {
+  if (!image || !image.parentElement) {
+    return null;
+  }
+
+  const hoverLayer = image.cloneNode(false);
+  hoverLayer.removeAttribute("srcset");
+  hoverLayer.removeAttribute("sizes");
+  hoverLayer.removeAttribute("loading");
+  hoverLayer.setAttribute("aria-hidden", "true");
+  hoverLayer.alt = "";
+  hoverLayer.classList.add("js-hover-image");
+  hoverLayer.style.opacity = "0";
+  image.insertAdjacentElement("afterend", hoverLayer);
+  return hoverLayer;
+}
+
+function showHoverImage(item) {
+  if (!item.hoverLayer || item.hoverImageStatus !== "ready") {
+    return;
+  }
+
+  item.hoverLayer.src = item.hoverImageSrc;
+  item.hoverLayer.style.transition = "opacity 360ms cubic-bezier(0.22, 1, 0.36, 1)";
+  item.hoverLayer.style.opacity = "1";
+}
+
+function hideHoverImage(item) {
+  if (!item.hoverLayer) {
+    return;
+  }
+
+  item.hoverLayer.style.transition = "opacity 460ms cubic-bezier(0.22, 1, 0.36, 1)";
+  item.hoverLayer.style.opacity = "0";
 }
 
 function resizeRenderer() {
@@ -340,11 +450,11 @@ async function createItem(placeholder, index) {
   const texturePath = image?.currentSrc || image?.getAttribute("src") || card.dataset.image;
   const originalImageSrc = image?.getAttribute("src") || texturePath;
   const hoverImageCandidates = originalImageSrc ? getHoverImageCandidates(originalImageSrc) : [];
+  const hoverLayer = createHoverLayer(image);
   const texture = await loadTexture(texturePath, card.dataset.name || image?.getAttribute("alt") || "", index);
-  const itemSmokeVideo = sharedSmokeVideo;
   const uniforms = {
     u_texture: { value: texture },
-    u_smokeTex: { value: itemSmokeVideo.texture },
+    u_smokeTex: { value: smokeSlots[0].texture },
     u_progress: { value: 0 },
     u_planeAspect: { value: 1 },
     u_videoAspect: { value: 1 }
@@ -371,30 +481,22 @@ async function createItem(placeholder, index) {
     image,
     mesh,
     uniforms,
-    smokeVideo: itemSmokeVideo,
+    smokeVideo: null,
     progress: 0,
     target: 0,
     hovered: false,
     originalImageSrc,
     hoverImageSrc: "",
     hoverImageCandidates,
-    hoverImageStatus: hoverImageCandidates.length > 0 ? "idle" : "error"
+    hoverImageStatus: hoverImageCandidates.length > 0 ? "idle" : "error",
+    hoverLayer
   };
-
-  itemSmokeVideo.video.addEventListener("loadedmetadata", () => {
-    item.uniforms.u_videoAspect.value = getVideoAspect(itemSmokeVideo.video);
-  });
 
   const setActive = (active) => {
     item.hovered = active && !prefersReducedMotion;
     if (active && !prefersReducedMotion) {
       if (item.target === 1 && item.progress > 0.001 && item.progress < 0.998) {
         return;
-      }
-      for (const other of items) {
-        if (other !== item) {
-          resetSmokeItem(other);
-        }
       }
       if (item.progress >= 0.998) {
         item.progress = 0;
@@ -405,13 +507,13 @@ async function createItem(placeholder, index) {
         }
       }
       item.target = 1;
+      activeSmokeItem = item;
+      item.progress = Math.max(item.progress, 0.002);
+      item.uniforms.u_progress.value = item.progress;
+      acquireSmokeSlot(item);
       preloadHoverImage(item);
-      if (item.image && item.hoverImageStatus === "ready") {
-        item.image.src = item.hoverImageSrc;
-      }
-      playSmokeVideo(item);
-    } else if (item.progress <= 0.001) {
-      resetSmokeItem(item);
+      showHoverImage(item);
+      playSmokeVideo(item, true);
     }
     placeholder.classList.toggle("is-smoking", item.target === 1);
     syncMeshesToDom();
@@ -428,15 +530,17 @@ async function createItem(placeholder, index) {
 }
 
 function resetSmokeItem(item) {
+  if (activeSmokeItem === item) {
+    activeSmokeItem = null;
+  }
   item.hovered = false;
   item.target = 0;
   item.progress = 0;
   item.uniforms.u_progress.value = 0;
   item.placeholder.classList.remove("is-smoking");
+  hideHoverImage(item);
+  releaseSmokeSlot(item);
   if (item.image) {
-    if (item.originalImageSrc && item.image.getAttribute("src") !== item.originalImageSrc) {
-      item.image.src = item.originalImageSrc;
-    }
     item.image.style.transition = "opacity 280ms ease";
     item.image.style.opacity = "1";
   }
@@ -448,16 +552,22 @@ function animate() {
   lastFrameTime = now;
 
   for (const item of items) {
-    item.uniforms.u_smokeTex.value = item.smokeVideo.texture;
-    item.uniforms.u_videoAspect.value = getVideoAspect(item.smokeVideo.video);
-    trimSmokeCredits(item);
-    item.smokeVideo.texture.needsUpdate = true;
+    if (item.smokeVideo) {
+      item.uniforms.u_smokeTex.value = item.smokeVideo.texture;
+      item.uniforms.u_videoAspect.value = getVideoAspect(item.smokeVideo.video);
+      trimSmokeCredits(item);
+      if (item.smokeVideo.video.playbackRate !== SMOKE_PLAYBACK_RATE) {
+        item.smokeVideo.video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
+        item.smokeVideo.video.playbackRate = SMOKE_PLAYBACK_RATE;
+      }
+      item.smokeVideo.texture.needsUpdate = true;
 
-    if ((item.target === 1 || item.progress > 0.001) && item.smokeVideo.video.readyState >= 2) {
-      if (item.target === 1 && item.smokeVideo.video.paused && item.progress < 0.998) {
-        const playRequest = item.smokeVideo.video.play();
-        if (playRequest) {
-          playRequest.catch(() => {});
+      if ((item.target === 1 || item.progress > 0.001) && item.smokeVideo.video.readyState >= 2) {
+        if (item.target === 1 && item.smokeVideo.video.paused && item.progress < 0.998 && !isSmokeCutoffReached(item.smokeVideo.video)) {
+          const playRequest = item.smokeVideo.video.play();
+          if (playRequest) {
+            playRequest.catch(() => {});
+          }
         }
       }
     }
@@ -471,8 +581,8 @@ function animate() {
     item.uniforms.u_progress.value = item.progress;
 
     if (item.image) {
-      const video = item.smokeVideo.video;
-      const hasVideoTime = Number.isFinite(video.duration) && video.duration > 2.5 && video.currentTime > 0;
+      const video = item.smokeVideo?.video;
+      const hasVideoTime = video && Number.isFinite(video.duration) && video.duration > 2.5 && video.currentTime > 0;
       const cutoff = hasVideoTime ? video.duration - 2.5 : 1;
       const videoProgress = hasVideoTime ? Math.min(1, video.currentTime / cutoff) : 0;
       const progressFallback = item.target === 1 ? item.progress : 0;
@@ -483,12 +593,12 @@ function animate() {
       const photoFade = fadeRatio * fadeRatio * (3 - 2 * fadeRatio);
       item.image.style.transition = item.target === 1 ? "none" : "opacity 280ms ease";
       item.image.style.opacity = String(1 - photoFade);
+      if (item.hoverLayer && item.hoverLayer.style.opacity !== "0") {
+        item.hoverLayer.style.opacity = String(1 - photoFade);
+      }
     }
 
     if (item.target === 1 && item.progress >= 1) {
-      item.smokeVideo.video.pause();
-      item.smokeVideo.video.currentTime = 0;
-      item.smokeVideo.texture.needsUpdate = true;
       resetSmokeItem(item);
     }
   }

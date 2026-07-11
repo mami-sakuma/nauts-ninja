@@ -3190,6 +3190,21 @@ main.p-mem,
     flex-shrink: 0;
 }
 
+.p-mem-list-item .img > .img-wrapper > .inner {
+    position: relative;
+}
+
+.p-mem-list-item .img > .img-wrapper img.js-hover-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+    z-index: 2;
+    will-change: opacity;
+}
+
 .p-mem-list-item .img,
 .p-mem-list-item .img > .img-wrapper,
 .p-mem-list-item .img > .img-wrapper > .inner,
