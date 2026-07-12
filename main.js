@@ -73,7 +73,7 @@ const SMOKE_TOP_EXTENSION = 1.06;
 const SMOKE_SIDE_EXTENSION = 1.06;
 const TOUCH_TRIGGER_DEBOUNCE = 420;
 const MOBILE_BREAKPOINT = 950;
-const MOBILE_SMOKE_Y_SHIFT = 0.08;
+const MOBILE_SMOKE_Y_SHIFT = 0.22;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
   const nautsMembers = [...document.querySelectorAll(".p-mem-list-item .img > .img-wrapper")];
