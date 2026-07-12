@@ -71,6 +71,9 @@ const SMOKE_START_DELAY = 320;
 const RESET_HOLD_DURATION = 900;
 const SMOKE_TOP_EXTENSION = 1.06;
 const SMOKE_SIDE_EXTENSION = 1.06;
+const TOUCH_TRIGGER_DEBOUNCE = 420;
+const MOBILE_BREAKPOINT = 950;
+const MOBILE_SMOKE_Y_SHIFT = 0.08;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
   const nautsMembers = [...document.querySelectorAll(".p-mem-list-item .img > .img-wrapper")];
@@ -90,6 +93,10 @@ function discoverPlaceholders() {
       return placeholder;
     })
     .filter((placeholder) => placeholder.querySelector("img"));
+}
+
+function isCoarsePointer() {
+  return window.matchMedia("(hover: none), (pointer: coarse)").matches;
 }
 
 const placeholders = discoverPlaceholders();
@@ -435,13 +442,15 @@ function resizeRenderer() {
 
 function syncMeshesToDom() {
   resizeRenderer();
+  const isMobileLayout = window.innerWidth <= MOBILE_BREAKPOINT;
 
   for (const item of items) {
     const rect = item.placeholder.getBoundingClientRect();
     const smokeScaleX = rect.width * SMOKE_SIDE_EXTENSION;
     const baseY = window.innerHeight - (rect.top + rect.height * 0.5);
     const smokeScaleY = rect.height * SMOKE_TOP_EXTENSION;
-    const smokeCenterY = baseY + (smokeScaleY - rect.height);
+    const mobileSmokeShift = isMobileLayout ? rect.height * MOBILE_SMOKE_Y_SHIFT : 0;
+    const smokeCenterY = baseY + (smokeScaleY - rect.height) + mobileSmokeShift;
     item.mesh.position.set(rect.left + rect.width * 0.5, smokeCenterY, 0);
     item.mesh.scale.set(smokeScaleX, smokeScaleY, 1);
     item.uniforms.u_planeAspect.value = smokeScaleX > 0 && smokeScaleY > 0 ? smokeScaleX / smokeScaleY : 1;
@@ -499,34 +508,52 @@ async function createItem(placeholder, index) {
     hoverLayer
   };
 
-  const setActive = (active) => {
-    item.hovered = active && !prefersReducedMotion;
-    if (active && !prefersReducedMotion) {
-      if (item.target === 1 && item.progress > 0.001 && item.progress < 0.998) {
-        return;
-      }
-      if (item.progress >= 0.998) {
-        item.progress = 0;
-        item.smokeDelayElapsed = 0;
-        item.smokeStarted = false;
-        item.holdElapsed = 0;
-        item.uniforms.u_progress.value = 0;
-        if (item.image) {
-          item.image.style.transition = "none";
-          item.image.style.opacity = "1";
-        }
-      }
-      preloadHoverImage(item);
-      showHoverImage(item);
-      item.target = 1;
-      activeSmokeItem = item;
+  const startSmokeEffect = (directPlay = false) => {
+    if (prefersReducedMotion) {
+      return;
+    }
+
+    if (item.target === 1 && item.progress > 0.001 && item.progress < 0.998) {
+      return;
+    }
+
+    if (item.progress >= 0.998) {
       item.progress = 0;
       item.smokeDelayElapsed = 0;
       item.smokeStarted = false;
       item.holdElapsed = 0;
       item.uniforms.u_progress.value = 0;
-      acquireSmokeSlot(item);
-      item.smokeVideo.video.load();
+      if (item.image) {
+        item.image.style.transition = "none";
+        item.image.style.opacity = "1";
+      }
+    }
+
+    item.hovered = true;
+    preloadHoverImage(item);
+    showHoverImage(item);
+    item.target = 1;
+    activeSmokeItem = item;
+    item.progress = 0;
+    item.smokeDelayElapsed = directPlay ? SMOKE_START_DELAY : 0;
+    item.smokeStarted = false;
+    item.holdElapsed = 0;
+    item.uniforms.u_progress.value = 0;
+    acquireSmokeSlot(item);
+    item.smokeVideo.video.load();
+
+    if (directPlay) {
+      item.smokeStarted = true;
+      item.progress = Math.max(item.progress, 0.002);
+      item.uniforms.u_progress.value = item.progress;
+      playSmokeVideo(item, true);
+    }
+  };
+
+  const setActive = (active) => {
+    item.hovered = active && !prefersReducedMotion;
+    if (active && !prefersReducedMotion) {
+      startSmokeEffect(false);
     } else if (item.target === 0) {
       hideHoverImage(item);
     }
@@ -535,8 +562,34 @@ async function createItem(placeholder, index) {
     requestAnimationFrame(syncMeshesToDom);
   };
 
+  const triggerTouchSmoke = () => {
+    const now = performance.now();
+    if (now - (item.lastTouchTriggerTime || 0) < TOUCH_TRIGGER_DEBOUNCE) {
+      return;
+    }
+    item.lastTouchTriggerTime = now;
+    startSmokeEffect(true);
+    placeholder.classList.toggle("is-smoking", item.target === 1);
+    syncMeshesToDom();
+    requestAnimationFrame(syncMeshesToDom);
+  };
+
   placeholder.addEventListener("pointerenter", () => setActive(true));
   placeholder.addEventListener("pointerleave", () => setActive(false));
+  placeholder.addEventListener("pointerdown", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") {
+      triggerTouchSmoke();
+    }
+  }, { passive: true });
+  placeholder.addEventListener("touchstart", () => {
+    triggerTouchSmoke();
+  }, { passive: true });
+  placeholder.addEventListener("click", () => {
+    if (!isCoarsePointer()) {
+      return;
+    }
+    triggerTouchSmoke();
+  });
   placeholder.addEventListener("focusin", () => setActive(true));
   placeholder.addEventListener("focusout", () => setActive(false));
   placeholder.tabIndex = 0;

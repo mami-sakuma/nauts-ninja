@@ -3210,6 +3210,8 @@ main.p-mem,
 .p-mem-list-item .img > .img-wrapper > .inner,
 .webgl-placeholder {
     background-color: #000 !important;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 body.webgl-ready .p-mem-list-item .img,
