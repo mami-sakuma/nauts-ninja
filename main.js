@@ -75,9 +75,9 @@ const SMOKE_NEXT_LABEL_GAP = 44;
 const SMOKE_FRAME_LIFT = 0.18;
 const SMOKE_FRAME_X_SHIFT = -0.1;
 const MOBILE_BREAKPOINT = 950;
-const MOBILE_SMOKE_SIDE_EXTENSION = 1.08;
-const MOBILE_SMOKE_FRAME_LIFT = 0.4;
-const MOBILE_SMOKE_TOP_INSET = 0.1;
+const MOBILE_SMOKE_SIDE_EXTENSION = 0.97;
+const MOBILE_SMOKE_FRAME_LIFT = 0.5;
+const MOBILE_SMOKE_TOP_INSET = 0.19;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
   const nautsMembers = [...document.querySelectorAll(".p-mem-list-item .img > .img-wrapper")];
