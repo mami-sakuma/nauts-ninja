@@ -65,15 +65,16 @@ const fragmentShader = `
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const HOVER_DURATION = 2800;
 const LEAVE_DURATION = 900;
-const SMOKE_PLAYBACK_RATE = 4.0;
-const SMOKE_POOL_SIZE = 6;
+const SMOKE_PLAYBACK_RATE = 2.0;
+const SMOKE_POOL_SIZE = 3;
+const SMOKE_CREDIT_CUT_SECONDS = 0.35;
 const SMOKE_START_DELAY = 320;
 const RESET_HOLD_DURATION = 900;
-const SMOKE_TOP_EXTENSION = 1.06;
 const SMOKE_SIDE_EXTENSION = 1.06;
 const TOUCH_TRIGGER_DEBOUNCE = 420;
-const MOBILE_BREAKPOINT = 950;
-const MOBILE_SMOKE_Y_SHIFT = 0.22;
+const SMOKE_NEXT_LABEL_GAP = 44;
+const SMOKE_FRAME_LIFT = 0.18;
+const SMOKE_FRAME_X_SHIFT = -0.1;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
   const nautsMembers = [...document.querySelectorAll(".p-mem-list-item .img > .img-wrapper")];
@@ -99,6 +100,11 @@ function isCoarsePointer() {
   return window.matchMedia("(hover: none), (pointer: coarse)").matches;
 }
 
+function getRendererPixelRatio() {
+  const deviceRatio = window.devicePixelRatio || 1;
+  return Math.min(deviceRatio, isCoarsePointer() ? 1 : 1.5);
+}
+
 const placeholders = discoverPlaceholders();
 const canvas = document.querySelector("#webgl-canvas");
 const scene = new THREE.Scene();
@@ -112,7 +118,7 @@ const renderer = new THREE.WebGLRenderer({
   powerPreference: "high-performance"
 });
 renderer.setClearColor(0x000000, 0);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(getRendererPixelRatio());
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.toneMappingExposure = 1;
@@ -218,7 +224,9 @@ function isSmokeCutoffReached(video) {
 }
 
 function getSmokeCutoffTime(video) {
-  return Number.isFinite(video.duration) && video.duration > 2.5 ? video.duration - 2.5 : 0;
+  return Number.isFinite(video.duration) && video.duration > SMOKE_CREDIT_CUT_SECONDS + 0.1
+    ? video.duration - SMOKE_CREDIT_CUT_SECONDS
+    : 0;
 }
 
 function getVideoAspect(video) {
@@ -227,7 +235,7 @@ function getVideoAspect(video) {
 
 function trimSmokeCredits(item) {
   const { video } = item.smokeVideo;
-  if (!Number.isFinite(video.duration) || video.duration <= 2.5) {
+  if (!Number.isFinite(video.duration) || video.duration <= SMOKE_CREDIT_CUT_SECONDS + 0.1) {
     return;
   }
   const cutoffTime = getSmokeCutoffTime(video);
@@ -432,6 +440,7 @@ function hideHoverImage(item) {
 function resizeRenderer() {
   const width = Math.max(1, Math.floor(window.innerWidth));
   const height = Math.max(1, Math.floor(window.innerHeight));
+  renderer.setPixelRatio(getRendererPixelRatio());
   renderer.setSize(width, height, false);
   camera.left = 0;
   camera.right = width;
@@ -440,18 +449,43 @@ function resizeRenderer() {
   camera.updateProjectionMatrix();
 }
 
+function getNextLabelTop(item, rect, smokeScaleX) {
+  let nextTop = Infinity;
+  const smokeLeft = rect.left + rect.width * 0.5 - smokeScaleX * 0.5;
+  const smokeRight = rect.left + rect.width * 0.5 + smokeScaleX * 0.5;
+
+  for (const candidate of items) {
+    if (candidate === item) {
+      continue;
+    }
+
+    const candidateCardRect = candidate.card.getBoundingClientRect();
+    const overlapsX = smokeRight > candidateCardRect.left && smokeLeft < candidateCardRect.right;
+    if (candidateCardRect.top <= rect.top || !overlapsX) {
+      continue;
+    }
+
+    const label = candidate.card.querySelector(".pt");
+    const labelRect = label?.getBoundingClientRect();
+    nextTop = Math.min(nextTop, labelRect?.top ?? candidateCardRect.top);
+  }
+
+  return nextTop;
+}
+
 function syncMeshesToDom() {
   resizeRenderer();
-  const isMobileLayout = window.innerWidth <= MOBILE_BREAKPOINT;
 
   for (const item of items) {
     const rect = item.placeholder.getBoundingClientRect();
+    const cardRect = item.card.getBoundingClientRect();
     const smokeScaleX = rect.width * SMOKE_SIDE_EXTENSION;
-    const baseY = window.innerHeight - (rect.top + rect.height * 0.5);
-    const smokeScaleY = rect.height * SMOKE_TOP_EXTENSION;
-    const mobileSmokeShift = isMobileLayout ? rect.height * MOBILE_SMOKE_Y_SHIFT : 0;
-    const smokeCenterY = baseY + (smokeScaleY - rect.height) + mobileSmokeShift;
-    item.mesh.position.set(rect.left + rect.width * 0.5, smokeCenterY, 0);
+    const nextLabelTop = getNextLabelTop(item, rect, smokeScaleX);
+    const smokeTop = Math.min(cardRect.top, rect.top);
+    const smokeBottom = Math.min(rect.bottom, nextLabelTop - SMOKE_NEXT_LABEL_GAP);
+    const smokeScaleY = Math.max(1, smokeBottom - smokeTop);
+    const smokeCenterY = window.innerHeight - (smokeTop + smokeScaleY * 0.5) + rect.height * SMOKE_FRAME_LIFT;
+    item.mesh.position.set(rect.left + rect.width * 0.5 + rect.width * SMOKE_FRAME_X_SHIFT, smokeCenterY, 0);
     item.mesh.scale.set(smokeScaleX, smokeScaleY, 1);
     item.uniforms.u_planeAspect.value = smokeScaleX > 0 && smokeScaleY > 0 ? smokeScaleX / smokeScaleY : 1;
   }
@@ -540,7 +574,6 @@ async function createItem(placeholder, index) {
     item.holdElapsed = 0;
     item.uniforms.u_progress.value = 0;
     acquireSmokeSlot(item);
-    item.smokeVideo.video.load();
 
     if (directPlay) {
       item.smokeStarted = true;
@@ -657,7 +690,7 @@ function animate() {
     if (item.target === 1 && item.smokeStarted) {
       item.progress = Math.min(1, item.progress + delta / HOVER_DURATION);
     } else if (item.target === 1) {
-      item.progress = 0;
+      item.progress = item.smokeStarted ? item.progress : 0;
     } else {
       item.progress = 0;
     }
@@ -666,11 +699,14 @@ function animate() {
 
     if (item.image) {
       const video = item.smokeVideo?.video;
-      const hasVideoTime = video && Number.isFinite(video.duration) && video.duration > 2.5 && video.currentTime > 0;
-      const cutoff = hasVideoTime ? video.duration - 2.5 : 1;
+      const hasVideoTime = video
+        && Number.isFinite(video.duration)
+        && video.duration > SMOKE_CREDIT_CUT_SECONDS + 0.1
+        && video.currentTime > 0;
+      const cutoff = hasVideoTime ? getSmokeCutoffTime(video) : 1;
       const videoProgress = hasVideoTime ? Math.min(1, video.currentTime / cutoff) : 0;
       const progressFallback = item.target === 1 ? item.progress : 0;
-      const disappearProgress = item.target === 1 ? Math.max(videoProgress, progressFallback) : item.progress;
+      const disappearProgress = item.target === 1 && hasVideoTime ? videoProgress : progressFallback;
       const fadeStart = 0.42;
       const fadeEnd = 0.76;
       const fadeRatio = Math.min(1, Math.max(0, (disappearProgress - fadeStart) / (fadeEnd - fadeStart)));
