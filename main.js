@@ -65,7 +65,7 @@ const fragmentShader = `
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const HOVER_DURATION = 2800;
 const LEAVE_DURATION = 900;
-const SMOKE_PLAYBACK_RATE = 1.0;
+const SMOKE_PLAYBACK_RATE = 1.5;
 const SMOKE_POOL_SIZE = 3;
 const SMOKE_START_DELAY = 320;
 const RESET_HOLD_DURATION = 900;
@@ -700,7 +700,7 @@ function animate() {
       const cutoff = hasVideoTime ? getSmokeCutoffTime(video) : 1;
       const videoProgress = hasVideoTime ? Math.min(1, video.currentTime / cutoff) : 0;
       const progressFallback = item.target === 1 ? item.progress : 0;
-      const disappearProgress = item.target === 1 && hasVideoTime ? videoProgress : progressFallback;
+      const disappearProgress = item.target === 1 ? Math.max(videoProgress, progressFallback) : progressFallback;
       const fadeStart = 0.42;
       const fadeEnd = 0.76;
       const fadeRatio = Math.min(1, Math.max(0, (disappearProgress - fadeStart) / (fadeEnd - fadeStart)));
