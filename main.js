@@ -65,9 +65,8 @@ const fragmentShader = `
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const HOVER_DURATION = 2800;
 const LEAVE_DURATION = 900;
-const SMOKE_PLAYBACK_RATE = 2.0;
+const SMOKE_PLAYBACK_RATE = 1.0;
 const SMOKE_POOL_SIZE = 3;
-const SMOKE_CREDIT_CUT_SECONDS = 0.35;
 const SMOKE_START_DELAY = 320;
 const RESET_HOLD_DURATION = 900;
 const SMOKE_SIDE_EXTENSION = 1.06;
@@ -75,6 +74,10 @@ const TOUCH_TRIGGER_DEBOUNCE = 420;
 const SMOKE_NEXT_LABEL_GAP = 44;
 const SMOKE_FRAME_LIFT = 0.18;
 const SMOKE_FRAME_X_SHIFT = -0.1;
+const MOBILE_BREAKPOINT = 950;
+const MOBILE_SMOKE_SIDE_EXTENSION = 1.08;
+const MOBILE_SMOKE_FRAME_LIFT = 0.4;
+const MOBILE_SMOKE_TOP_INSET = 0.1;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
   const nautsMembers = [...document.querySelectorAll(".p-mem-list-item .img > .img-wrapper")];
@@ -218,14 +221,9 @@ function releaseSmokeSlot(item) {
   item.smokeVideo = null;
 }
 
-function isSmokeCutoffReached(video) {
-  const cutoffTime = getSmokeCutoffTime(video);
-  return cutoffTime > 0 && video.currentTime >= cutoffTime;
-}
-
 function getSmokeCutoffTime(video) {
-  return Number.isFinite(video.duration) && video.duration > SMOKE_CREDIT_CUT_SECONDS + 0.1
-    ? video.duration - SMOKE_CREDIT_CUT_SECONDS
+  return Number.isFinite(video.duration) && video.duration > 0
+    ? video.duration
     : 0;
 }
 
@@ -235,14 +233,7 @@ function getVideoAspect(video) {
 
 function trimSmokeCredits(item) {
   const { video } = item.smokeVideo;
-  if (!Number.isFinite(video.duration) || video.duration <= SMOKE_CREDIT_CUT_SECONDS + 0.1) {
-    return;
-  }
-  const cutoffTime = getSmokeCutoffTime(video);
-  if (video.currentTime >= cutoffTime) {
-    video.pause();
-    video.currentTime = Math.max(0, cutoffTime);
-  }
+  video.loop = true;
 }
 
 function playSmokeVideo(item, restart = true) {
@@ -475,16 +466,19 @@ function getNextLabelTop(item, rect, smokeScaleX) {
 
 function syncMeshesToDom() {
   resizeRenderer();
+  const isMobileLayout = window.innerWidth <= MOBILE_BREAKPOINT;
 
   for (const item of items) {
     const rect = item.placeholder.getBoundingClientRect();
     const cardRect = item.card.getBoundingClientRect();
-    const smokeScaleX = rect.width * SMOKE_SIDE_EXTENSION;
+    const smokeSideExtension = isMobileLayout ? MOBILE_SMOKE_SIDE_EXTENSION : SMOKE_SIDE_EXTENSION;
+    const smokeFrameLift = isMobileLayout ? MOBILE_SMOKE_FRAME_LIFT : SMOKE_FRAME_LIFT;
+    const smokeScaleX = rect.width * smokeSideExtension;
     const nextLabelTop = getNextLabelTop(item, rect, smokeScaleX);
-    const smokeTop = Math.min(cardRect.top, rect.top);
+    const smokeTop = Math.min(cardRect.top, rect.top) + (isMobileLayout ? rect.height * MOBILE_SMOKE_TOP_INSET : 0);
     const smokeBottom = Math.min(rect.bottom, nextLabelTop - SMOKE_NEXT_LABEL_GAP);
     const smokeScaleY = Math.max(1, smokeBottom - smokeTop);
-    const smokeCenterY = window.innerHeight - (smokeTop + smokeScaleY * 0.5) + rect.height * SMOKE_FRAME_LIFT;
+    const smokeCenterY = window.innerHeight - (smokeTop + smokeScaleY * 0.5) + rect.height * smokeFrameLift;
     item.mesh.position.set(rect.left + rect.width * 0.5 + rect.width * SMOKE_FRAME_X_SHIFT, smokeCenterY, 0);
     item.mesh.scale.set(smokeScaleX, smokeScaleY, 1);
     item.uniforms.u_planeAspect.value = smokeScaleX > 0 && smokeScaleY > 0 ? smokeScaleX / smokeScaleY : 1;
@@ -678,7 +672,7 @@ function animate() {
       item.smokeVideo.texture.needsUpdate = true;
 
       if ((item.smokeStarted || item.progress > 0.001) && item.smokeVideo.video.readyState >= 2) {
-        if (item.target === 1 && item.smokeVideo.video.paused && item.progress < 0.998 && !isSmokeCutoffReached(item.smokeVideo.video)) {
+        if (item.target === 1 && item.smokeVideo.video.paused && item.progress < 0.998) {
           const playRequest = item.smokeVideo.video.play();
           if (playRequest) {
             playRequest.catch(() => {});
@@ -701,7 +695,7 @@ function animate() {
       const video = item.smokeVideo?.video;
       const hasVideoTime = video
         && Number.isFinite(video.duration)
-        && video.duration > SMOKE_CREDIT_CUT_SECONDS + 0.1
+        && video.duration > 0
         && video.currentTime > 0;
       const cutoff = hasVideoTime ? getSmokeCutoffTime(video) : 1;
       const videoProgress = hasVideoTime ? Math.min(1, video.currentTime / cutoff) : 0;
