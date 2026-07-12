@@ -3229,3 +3229,36 @@ body.webgl-ready .webgl-placeholder {
     }
 }
 
+@media all and (max-width: 950px) {
+    .p-mem-list {
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        column-gap: 16px;
+        row-gap: 56px;
+        padding-left: 24px;
+        padding-right: 24px;
+        box-sizing: border-box;
+    }
+
+    .p-mem-list-item {
+        --mobileMemberImageWidth: min(34vw, 132px);
+        width: 100% !important;
+        min-width: 0;
+        padding-left: 0 !important;
+        padding-top: 40px;
+        gap: 18px;
+        box-sizing: border-box;
+    }
+
+    .p-mem-list-item .img,
+    .p-mem-list-item .img > .img-wrapper > .inner {
+        width: var(--mobileMemberImageWidth) !important;
+        height: calc(var(--mobileMemberImageWidth) * 1.25) !important;
+    }
+
+    .p-mem-list-item .info {
+        width: 100%;
+        min-width: 0;
+    }
+}
+

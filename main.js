@@ -38,7 +38,9 @@ const fragmentShader = `
     float thickSmoke = smoothstep(0.045, 0.14, smokeDensity);
 
     float fadeX = smoothstep(0.0, 0.22, vUv.x) * smoothstep(1.0, 0.78, vUv.x);
-    float fadeY = smoothstep(0.0, 0.04, vUv.y) * smoothstep(1.0, 0.54, vUv.y);
+    float topFade = smoothstep(1.0, 0.38, vUv.y);
+    topFade = topFade * topFade * (3.0 - 2.0 * topFade);
+    float fadeY = smoothstep(0.0, 0.04, vUv.y) * topFade;
     float bottomMask = smoothstep(0.055, 0.13, vUv.y);
     float borderMask = fadeX * fadeY * bottomMask;
 
@@ -66,6 +68,7 @@ const LEAVE_DURATION = 900;
 const SMOKE_PLAYBACK_RATE = 4.0;
 const SMOKE_POOL_SIZE = 6;
 const SMOKE_START_DELAY = 320;
+const RESET_HOLD_DURATION = 900;
 const SMOKE_TOP_EXTENSION = 1.06;
 const SMOKE_SIDE_EXTENSION = 1.06;
 function discoverPlaceholders() {
@@ -488,6 +491,7 @@ async function createItem(placeholder, index) {
     hovered: false,
     smokeDelayElapsed: 0,
     smokeStarted: false,
+    holdElapsed: 0,
     originalImageSrc,
     hoverImageSrc: "",
     hoverImageCandidates,
@@ -505,6 +509,7 @@ async function createItem(placeholder, index) {
         item.progress = 0;
         item.smokeDelayElapsed = 0;
         item.smokeStarted = false;
+        item.holdElapsed = 0;
         item.uniforms.u_progress.value = 0;
         if (item.image) {
           item.image.style.transition = "none";
@@ -518,9 +523,10 @@ async function createItem(placeholder, index) {
       item.progress = 0;
       item.smokeDelayElapsed = 0;
       item.smokeStarted = false;
+      item.holdElapsed = 0;
       item.uniforms.u_progress.value = 0;
       acquireSmokeSlot(item);
-      playSmokeVideo(item, true);
+      item.smokeVideo.video.load();
     } else if (item.target === 0) {
       hideHoverImage(item);
     }
@@ -548,6 +554,7 @@ function resetSmokeItem(item) {
   item.progress = 0;
   item.smokeDelayElapsed = 0;
   item.smokeStarted = false;
+  item.holdElapsed = 0;
   item.uniforms.u_progress.value = 0;
   item.placeholder.classList.remove("is-smoking");
   hideHoverImage(item);
@@ -570,10 +577,11 @@ function animate() {
         item.smokeStarted = true;
         item.progress = Math.max(item.progress, 0.002);
         item.uniforms.u_progress.value = item.progress;
+        playSmokeVideo(item, true);
       }
     }
 
-    if (item.smokeVideo) {
+    if (item.smokeVideo && item.smokeStarted) {
       item.uniforms.u_smokeTex.value = item.smokeVideo.texture;
       item.uniforms.u_videoAspect.value = getVideoAspect(item.smokeVideo.video);
       trimSmokeCredits(item);
@@ -622,7 +630,10 @@ function animate() {
     }
 
     if (item.target === 1 && item.progress >= 1) {
-      resetSmokeItem(item);
+      item.holdElapsed += delta;
+      if (item.holdElapsed >= RESET_HOLD_DURATION) {
+        resetSmokeItem(item);
+      }
     }
   }
 
