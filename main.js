@@ -64,7 +64,6 @@ const fragmentShader = `
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const HOVER_DURATION = 2800;
-const LEAVE_DURATION = 900;
 const SMOKE_PLAYBACK_RATE = 2.25;
 const SMOKE_POOL_SIZE = 3;
 const SMOKE_START_DELAY = 320;
@@ -222,12 +221,6 @@ function releaseSmokeSlot(item) {
   slot.texture.needsUpdate = true;
   slot.item = null;
   item.smokeVideo = null;
-}
-
-function getSmokeCutoffTime(video) {
-  return Number.isFinite(video.duration) && video.duration > 0
-    ? video.duration
-    : 0;
 }
 
 function getVideoAspect(video) {
@@ -488,7 +481,6 @@ function showHoverImage(item) {
   }
 
   item.finalShown = false;
-  item.finishedHidden = false;
   item.finalFadeElapsed = 0;
   item.hoverLayer.src = item.hoverImageSrc;
   item.hoverLayer.style.display = "block";
@@ -534,7 +526,6 @@ function showFinalImage(item) {
     item.hoverLayer.style.display = "none";
   }
   item.finalShown = true;
-  item.finishedHidden = false;
   if (item.image) {
     item.image.style.transition = "none";
     item.image.style.opacity = "1";
@@ -545,7 +536,6 @@ function showFinalImage(item) {
 function resetVisualLayersToInitial(item) {
   item.finalShown = false;
   item.awaitingFinalImage = false;
-  item.finishedHidden = false;
   item.finalFadeElapsed = 0;
   item.visualElapsed = 0;
   if (item.image) {
@@ -681,7 +671,6 @@ async function createItem(placeholder, index) {
     finalImageStatus: finalImageCandidates.length > 0 ? "idle" : "error",
     finalShown: false,
     awaitingFinalImage: false,
-    finishedHidden: false,
     finalFadeElapsed: 0,
     hoverLayer,
     finalLayer
@@ -708,7 +697,6 @@ async function createItem(placeholder, index) {
     item.hovered = true;
     item.finalShown = false;
     item.awaitingFinalImage = false;
-    item.finishedHidden = false;
     item.finalFadeElapsed = 0;
     resetVisualLayersToInitial(item);
     preloadHoverImage(item);
@@ -853,20 +841,7 @@ function animate() {
     item.uniforms.u_progress.value = item.progress;
 
     if (item.image) {
-      if (item.finishedHidden) {
-        item.image.style.transition = "none";
-        item.image.style.opacity = "0";
-        if (item.hoverLayer) {
-          item.hoverLayer.style.transition = "none";
-          item.hoverLayer.style.opacity = "0";
-          item.hoverLayer.style.display = "none";
-        }
-        if (item.finalLayer) {
-          item.finalLayer.style.transition = "none";
-          item.finalLayer.style.opacity = "0";
-          item.finalLayer.style.display = "none";
-        }
-      } else if (item.target === 1) {
+      if (item.target === 1) {
         const hoverFade = smoothRange(item.visualElapsed, 0, FIRST_TO_SECOND_DURATION);
         const finalFade = item.finalImageStatus === "ready" ? smoothRange(item.progress, 0.42, 0.84) : 0;
         let finalReturnFade = 0;
