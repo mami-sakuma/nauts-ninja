@@ -37,7 +37,7 @@ const fragmentShader = `
     float smokeDensity = max(max(smoke.r, smoke.g), smoke.b);
     float thickSmoke = smoothstep(0.045, 0.14, smokeDensity);
 
-    float fadeX = smoothstep(0.0, 0.22, vUv.x) * smoothstep(1.0, 0.78, vUv.x);
+    float fadeX = 1.0;
     float topFade = smoothstep(1.0, 0.38, vUv.y);
     topFade = topFade * topFade * (3.0 - 2.0 * topFade);
     float fadeY = smoothstep(0.0, 0.04, vUv.y) * topFade;
@@ -65,15 +65,18 @@ const fragmentShader = `
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const HOVER_DURATION = 2800;
 const LEAVE_DURATION = 900;
-const SMOKE_PLAYBACK_RATE = 1.5;
+const SMOKE_PLAYBACK_RATE = 2.25;
 const SMOKE_POOL_SIZE = 3;
 const SMOKE_START_DELAY = 320;
-const RESET_HOLD_DURATION = 900;
+const FINAL_VISIBLE_DURATION = 500;
+const FINAL_FADE_DURATION = 1200;
+const FIRST_TO_SECOND_DURATION = 180;
 const SMOKE_SIDE_EXTENSION = 1.06;
 const TOUCH_TRIGGER_DEBOUNCE = 420;
 const SMOKE_NEXT_LABEL_GAP = 44;
-const SMOKE_FRAME_LIFT = 0.18;
+const SMOKE_FRAME_LIFT = 0.2;
 const SMOKE_FRAME_X_SHIFT = -0.1;
+const SMOKE_TOP_TRIM = 0.2;
 const MOBILE_BREAKPOINT = 950;
 const MOBILE_SMOKE_SIDE_EXTENSION = 0.97;
 const MOBILE_SMOKE_FRAME_LIFT = 0.5;
@@ -231,6 +234,11 @@ function getVideoAspect(video) {
   return video.videoWidth > 0 && video.videoHeight > 0 ? video.videoWidth / video.videoHeight : 1;
 }
 
+function smoothRange(value, start, end) {
+  const t = Math.min(1, Math.max(0, (value - start) / (end - start)));
+  return t * t * (3 - 2 * t);
+}
+
 function trimSmokeCredits(item) {
   const { video } = item.smokeVideo;
   video.loop = true;
@@ -334,7 +342,7 @@ function loadTexture(path, name, index) {
 
 const HOVER_IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "avif"];
 
-function getHoverImageCandidates(src) {
+function getNumberedImageCandidates(src, marker) {
   const queryIndex = src.search(/[?#]/);
   const cleanSrc = queryIndex === -1 ? src : src.slice(0, queryIndex);
   const suffix = queryIndex === -1 ? "" : src.slice(queryIndex);
@@ -342,20 +350,28 @@ function getHoverImageCandidates(src) {
   const slashIndex = cleanSrc.lastIndexOf("/");
 
   if (extensionIndex === -1 || extensionIndex < slashIndex) {
-    return [`${cleanSrc}2${suffix}`];
+    return [`${cleanSrc}${marker}${suffix}`];
   }
 
   const base = cleanSrc.slice(0, extensionIndex);
   const extension = cleanSrc.slice(extensionIndex + 1);
-  const candidates = [`${base}2.${extension}${suffix}`];
+  const candidates = [`${base}${marker}.${extension}${suffix}`];
 
   for (const candidateExtension of HOVER_IMAGE_EXTENSIONS) {
     if (candidateExtension !== extension.toLowerCase()) {
-      candidates.push(`${base}2.${candidateExtension}${suffix}`);
+      candidates.push(`${base}${marker}.${candidateExtension}${suffix}`);
     }
   }
 
   return [...new Set(candidates)];
+}
+
+function getHoverImageCandidates(src) {
+  return getNumberedImageCandidates(src, "2");
+}
+
+function getFinalImageCandidates(src) {
+  return getNumberedImageCandidates(src, "3");
 }
 
 function preloadHoverImage(item) {
@@ -392,21 +408,78 @@ function preloadHoverImage(item) {
   tryNextCandidate();
 }
 
+function preloadFinalImage(item) {
+  if (item.finalImageStatus !== "idle" || item.finalImageCandidates.length === 0) {
+    return;
+  }
+
+  item.finalImageStatus = "loading";
+  let candidateIndex = 0;
+  const tryNextCandidate = () => {
+    const candidate = item.finalImageCandidates[candidateIndex];
+    const finalImage = new Image();
+    finalImage.onload = () => {
+      item.finalImageSrc = candidate;
+      item.finalImageStatus = "ready";
+      if (item.finalLayer) {
+        item.finalLayer.src = item.finalImageSrc;
+      }
+      if (item.awaitingFinalImage) {
+        item.awaitingFinalImage = false;
+        showFinalImage(item);
+      }
+    };
+    finalImage.onerror = () => {
+      candidateIndex += 1;
+      if (candidateIndex < item.finalImageCandidates.length) {
+        tryNextCandidate();
+      } else {
+        item.finalImageStatus = "error";
+        item.awaitingFinalImage = false;
+      }
+    };
+    finalImage.src = candidate;
+  };
+
+  tryNextCandidate();
+}
+
 function createHoverLayer(image) {
   if (!image || !image.parentElement) {
     return null;
   }
 
   const hoverLayer = image.cloneNode(false);
+  hoverLayer.removeAttribute("src");
   hoverLayer.removeAttribute("srcset");
   hoverLayer.removeAttribute("sizes");
   hoverLayer.removeAttribute("loading");
   hoverLayer.setAttribute("aria-hidden", "true");
   hoverLayer.alt = "";
   hoverLayer.classList.add("js-hover-image");
+  hoverLayer.style.display = "none";
   hoverLayer.style.opacity = "0";
   image.insertAdjacentElement("afterend", hoverLayer);
   return hoverLayer;
+}
+
+function createFinalLayer(image, hoverLayer) {
+  if (!image || !image.parentElement) {
+    return null;
+  }
+
+  const finalLayer = image.cloneNode(false);
+  finalLayer.removeAttribute("src");
+  finalLayer.removeAttribute("srcset");
+  finalLayer.removeAttribute("sizes");
+  finalLayer.removeAttribute("loading");
+  finalLayer.setAttribute("aria-hidden", "true");
+  finalLayer.alt = "";
+  finalLayer.classList.add("js-hover-image", "js-final-image");
+  finalLayer.style.display = "none";
+  finalLayer.style.opacity = "0";
+  (hoverLayer || image).insertAdjacentElement("afterend", finalLayer);
+  return finalLayer;
 }
 
 function showHoverImage(item) {
@@ -414,9 +487,22 @@ function showHoverImage(item) {
     return;
   }
 
+  item.finalShown = false;
+  item.finishedHidden = false;
+  item.finalFadeElapsed = 0;
   item.hoverLayer.src = item.hoverImageSrc;
-  item.hoverLayer.style.transition = "opacity 360ms cubic-bezier(0.22, 1, 0.36, 1)";
-  item.hoverLayer.style.opacity = "1";
+  item.hoverLayer.style.display = "block";
+  item.hoverLayer.style.transition = "none";
+  item.hoverLayer.style.opacity = "0";
+  if (item.finalLayer) {
+    item.finalLayer.style.display = "none";
+    item.finalLayer.style.transition = "none";
+    item.finalLayer.style.opacity = "0";
+  }
+  if (item.image) {
+    item.image.style.transition = "none";
+    item.image.style.opacity = "1";
+  }
 }
 
 function hideHoverImage(item) {
@@ -426,6 +512,59 @@ function hideHoverImage(item) {
 
   item.hoverLayer.style.transition = "opacity 460ms cubic-bezier(0.22, 1, 0.36, 1)";
   item.hoverLayer.style.opacity = "0";
+  window.setTimeout(() => {
+    if (item.hoverLayer && item.hoverLayer.style.opacity === "0") {
+      item.hoverLayer.style.display = "none";
+    }
+  }, 480);
+}
+
+function showFinalImage(item) {
+  if (!item.finalLayer || item.finalImageStatus !== "ready") {
+    return false;
+  }
+
+  item.finalLayer.src = item.finalImageSrc;
+  item.finalLayer.style.display = "block";
+  item.finalLayer.style.transition = "opacity 520ms cubic-bezier(0.22, 1, 0.36, 1)";
+  item.finalLayer.style.opacity = "1";
+  if (item.hoverLayer) {
+    item.hoverLayer.style.transition = "none";
+    item.hoverLayer.style.opacity = "0";
+    item.hoverLayer.style.display = "none";
+  }
+  item.finalShown = true;
+  item.finishedHidden = false;
+  if (item.image) {
+    item.image.style.transition = "none";
+    item.image.style.opacity = "1";
+  }
+  return true;
+}
+
+function resetVisualLayersToInitial(item) {
+  item.finalShown = false;
+  item.awaitingFinalImage = false;
+  item.finishedHidden = false;
+  item.finalFadeElapsed = 0;
+  item.visualElapsed = 0;
+  if (item.image) {
+    if (item.originalImageSrc) {
+      item.image.src = item.originalImageSrc;
+    }
+    item.image.style.transition = "none";
+    item.image.style.opacity = "1";
+  }
+  if (item.hoverLayer) {
+    item.hoverLayer.style.display = "none";
+    item.hoverLayer.style.transition = "none";
+    item.hoverLayer.style.opacity = "0";
+  }
+  if (item.finalLayer) {
+    item.finalLayer.style.display = "none";
+    item.finalLayer.style.transition = "none";
+    item.finalLayer.style.opacity = "0";
+  }
 }
 
 function resizeRenderer() {
@@ -475,8 +614,9 @@ function syncMeshesToDom() {
     const smokeFrameLift = isMobileLayout ? MOBILE_SMOKE_FRAME_LIFT : SMOKE_FRAME_LIFT;
     const smokeScaleX = rect.width * smokeSideExtension;
     const nextLabelTop = getNextLabelTop(item, rect, smokeScaleX);
-    const smokeTop = Math.min(cardRect.top, rect.top) + (isMobileLayout ? rect.height * MOBILE_SMOKE_TOP_INSET : 0);
+    const smokeTopBase = Math.min(cardRect.top, rect.top) + (isMobileLayout ? rect.height * MOBILE_SMOKE_TOP_INSET : 0);
     const smokeBottom = Math.min(rect.bottom, nextLabelTop - SMOKE_NEXT_LABEL_GAP);
+    const smokeTop = smokeTopBase + Math.max(0, smokeBottom - smokeTopBase) * SMOKE_TOP_TRIM;
     const smokeScaleY = Math.max(1, smokeBottom - smokeTop);
     const smokeCenterY = window.innerHeight - (smokeTop + smokeScaleY * 0.5) + rect.height * smokeFrameLift;
     item.mesh.position.set(rect.left + rect.width * 0.5 + rect.width * SMOKE_FRAME_X_SHIFT, smokeCenterY, 0);
@@ -491,7 +631,9 @@ async function createItem(placeholder, index) {
   const texturePath = image?.currentSrc || image?.getAttribute("src") || card.dataset.image;
   const originalImageSrc = image?.getAttribute("src") || texturePath;
   const hoverImageCandidates = originalImageSrc ? getHoverImageCandidates(originalImageSrc) : [];
+  const finalImageCandidates = originalImageSrc ? getFinalImageCandidates(originalImageSrc) : [];
   const hoverLayer = createHoverLayer(image);
+  const finalLayer = createFinalLayer(image, hoverLayer);
   const texture = await loadTexture(texturePath, card.dataset.name || image?.getAttribute("alt") || "", index);
   const uniforms = {
     u_texture: { value: texture },
@@ -527,13 +669,22 @@ async function createItem(placeholder, index) {
     target: 0,
     hovered: false,
     smokeDelayElapsed: 0,
+    visualElapsed: 0,
     smokeStarted: false,
     holdElapsed: 0,
     originalImageSrc,
     hoverImageSrc: "",
     hoverImageCandidates,
     hoverImageStatus: hoverImageCandidates.length > 0 ? "idle" : "error",
-    hoverLayer
+    finalImageSrc: "",
+    finalImageCandidates,
+    finalImageStatus: finalImageCandidates.length > 0 ? "idle" : "error",
+    finalShown: false,
+    awaitingFinalImage: false,
+    finishedHidden: false,
+    finalFadeElapsed: 0,
+    hoverLayer,
+    finalLayer
   };
 
   const startSmokeEffect = (directPlay = false) => {
@@ -548,22 +699,26 @@ async function createItem(placeholder, index) {
     if (item.progress >= 0.998) {
       item.progress = 0;
       item.smokeDelayElapsed = 0;
+      item.visualElapsed = 0;
       item.smokeStarted = false;
       item.holdElapsed = 0;
       item.uniforms.u_progress.value = 0;
-      if (item.image) {
-        item.image.style.transition = "none";
-        item.image.style.opacity = "1";
-      }
     }
 
     item.hovered = true;
+    item.finalShown = false;
+    item.awaitingFinalImage = false;
+    item.finishedHidden = false;
+    item.finalFadeElapsed = 0;
+    resetVisualLayersToInitial(item);
     preloadHoverImage(item);
+    preloadFinalImage(item);
     showHoverImage(item);
     item.target = 1;
     activeSmokeItem = item;
     item.progress = 0;
     item.smokeDelayElapsed = directPlay ? SMOKE_START_DELAY : 0;
+    item.visualElapsed = 0;
     item.smokeStarted = false;
     item.holdElapsed = 0;
     item.uniforms.u_progress.value = 0;
@@ -577,11 +732,12 @@ async function createItem(placeholder, index) {
     }
   };
 
+  resetVisualLayersToInitial(item);
   const setActive = (active) => {
     item.hovered = active && !prefersReducedMotion;
     if (active && !prefersReducedMotion) {
       startSmokeEffect(false);
-    } else if (item.target === 0) {
+    } else if (item.target === 0 && !item.finalShown) {
       hideHoverImage(item);
     }
     placeholder.classList.toggle("is-smoking", item.target === 1);
@@ -623,6 +779,7 @@ async function createItem(placeholder, index) {
 
   items.push(item);
   preloadHoverImage(item);
+  preloadFinalImage(item);
 }
 
 function resetSmokeItem(item) {
@@ -633,16 +790,14 @@ function resetSmokeItem(item) {
   item.target = 0;
   item.progress = 0;
   item.smokeDelayElapsed = 0;
+  item.visualElapsed = 0;
   item.smokeStarted = false;
   item.holdElapsed = 0;
+  item.finalFadeElapsed = 0;
   item.uniforms.u_progress.value = 0;
   item.placeholder.classList.remove("is-smoking");
-  hideHoverImage(item);
   releaseSmokeSlot(item);
-  if (item.image) {
-    item.image.style.transition = "opacity 280ms ease";
-    item.image.style.opacity = "1";
-  }
+  resetVisualLayersToInitial(item);
 }
 
 function animate() {
@@ -651,6 +806,12 @@ function animate() {
   lastFrameTime = now;
 
   for (const item of items) {
+    if (item.target === 1) {
+      item.visualElapsed += delta;
+    } else {
+      item.visualElapsed = 0;
+    }
+
     if (item.target === 1 && item.smokeVideo && !item.smokeStarted) {
       item.smokeDelayElapsed += delta;
       if (item.smokeDelayElapsed >= SMOKE_START_DELAY) {
@@ -692,29 +853,53 @@ function animate() {
     item.uniforms.u_progress.value = item.progress;
 
     if (item.image) {
-      const video = item.smokeVideo?.video;
-      const hasVideoTime = video
-        && Number.isFinite(video.duration)
-        && video.duration > 0
-        && video.currentTime > 0;
-      const cutoff = hasVideoTime ? getSmokeCutoffTime(video) : 1;
-      const videoProgress = hasVideoTime ? Math.min(1, video.currentTime / cutoff) : 0;
-      const progressFallback = item.target === 1 ? item.progress : 0;
-      const disappearProgress = item.target === 1 ? Math.max(videoProgress, progressFallback) : progressFallback;
-      const fadeStart = 0.42;
-      const fadeEnd = 0.76;
-      const fadeRatio = Math.min(1, Math.max(0, (disappearProgress - fadeStart) / (fadeEnd - fadeStart)));
-      const photoFade = fadeRatio * fadeRatio * (3 - 2 * fadeRatio);
-      item.image.style.transition = item.target === 1 ? "none" : "opacity 280ms ease";
-      item.image.style.opacity = String(1 - photoFade);
-      if (item.hoverLayer && item.hoverLayer.style.opacity !== "0") {
-        item.hoverLayer.style.opacity = String(1 - photoFade);
+      if (item.finishedHidden) {
+        item.image.style.transition = "none";
+        item.image.style.opacity = "0";
+        if (item.hoverLayer) {
+          item.hoverLayer.style.transition = "none";
+          item.hoverLayer.style.opacity = "0";
+          item.hoverLayer.style.display = "none";
+        }
+        if (item.finalLayer) {
+          item.finalLayer.style.transition = "none";
+          item.finalLayer.style.opacity = "0";
+          item.finalLayer.style.display = "none";
+        }
+      } else if (item.target === 1) {
+        const hoverFade = smoothRange(item.visualElapsed, 0, FIRST_TO_SECOND_DURATION);
+        const finalFade = item.finalImageStatus === "ready" ? smoothRange(item.progress, 0.42, 0.84) : 0;
+        let finalReturnFade = 0;
+
+        if (item.progress >= 1 && item.holdElapsed >= FINAL_VISIBLE_DURATION) {
+          finalReturnFade = Math.min(1, item.finalFadeElapsed / FINAL_FADE_DURATION);
+          finalReturnFade = finalReturnFade * finalReturnFade * (3 - 2 * finalReturnFade);
+        }
+
+        item.image.style.transition = "none";
+        item.image.style.opacity = String((1 - hoverFade) + finalReturnFade * hoverFade);
+
+        if (item.hoverLayer && item.hoverImageStatus === "ready") {
+          item.hoverLayer.src = item.hoverImageSrc;
+          item.hoverLayer.style.display = "block";
+          item.hoverLayer.style.opacity = String(hoverFade * (1 - finalFade));
+        }
+        if (item.finalLayer && item.finalImageStatus === "ready") {
+          item.finalLayer.src = item.finalImageSrc;
+          item.finalLayer.style.display = "block";
+          item.finalLayer.style.opacity = String(finalFade * (1 - finalReturnFade));
+        }
+      } else {
+        resetVisualLayersToInitial(item);
       }
     }
 
     if (item.target === 1 && item.progress >= 1) {
       item.holdElapsed += delta;
-      if (item.holdElapsed >= RESET_HOLD_DURATION) {
+      if (item.holdElapsed >= FINAL_VISIBLE_DURATION) {
+        item.finalFadeElapsed += delta;
+      }
+      if (item.finalFadeElapsed >= FINAL_FADE_DURATION) {
         resetSmokeItem(item);
       }
     }
@@ -725,10 +910,20 @@ function animate() {
 }
 
 Promise.all(placeholders.map(createItem)).then(() => {
+  for (const item of items) {
+    resetVisualLayersToInitial(item);
+  }
   syncMeshesToDom();
   document.body.classList.add("webgl-ready");
   window.addEventListener("resize", syncMeshesToDom, { passive: true });
   window.addEventListener("scroll", syncMeshesToDom, { passive: true });
+  window.addEventListener("pageshow", () => {
+    for (const item of items) {
+      if (item.target === 0) {
+        resetVisualLayersToInitial(item);
+      }
+    }
+  });
   new ResizeObserver(syncMeshesToDom).observe(document.body);
   renderer.render(scene, camera);
   animate();
