@@ -73,12 +73,12 @@ const FIRST_TO_SECOND_DURATION = 180;
 const SMOKE_SIDE_EXTENSION = 1.06;
 const TOUCH_TRIGGER_DEBOUNCE = 420;
 const SMOKE_NEXT_LABEL_GAP = 44;
-const SMOKE_FRAME_LIFT = 0.2;
+const SMOKE_FRAME_LIFT = 0.3;
 const SMOKE_FRAME_X_SHIFT = -0.1;
 const SMOKE_TOP_TRIM = 0.2;
 const MOBILE_BREAKPOINT = 950;
 const MOBILE_SMOKE_SIDE_EXTENSION = 0.97;
-const MOBILE_SMOKE_FRAME_LIFT = 0.5;
+const MOBILE_SMOKE_FRAME_LIFT = 0.45;
 const MOBILE_SMOKE_TOP_INSET = 0.19;
 function discoverPlaceholders() {
   const explicit = [...document.querySelectorAll(".webgl-placeholder")];
