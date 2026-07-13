@@ -132,6 +132,23 @@ const items = [];
 let lastFrameTime = performance.now();
 let activeSmokeItem = null;
 
+function startFooterClock() {
+  const target = document.querySelector(".js-current-datetime");
+  if (!target) {
+    return;
+  }
+
+  const months = ["Jan.", "Feb.", "Mar.", "Apr.", "May.", "Jun.", "Jul.", "Aug.", "Sep.", "Oct.", "Nov.", "Dec."];
+  const pad = (value) => String(value).padStart(2, "0");
+  const update = () => {
+    const now = new Date();
+    target.textContent = `${months[now.getMonth()]}${now.getDate()},${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  };
+
+  update();
+  window.setInterval(update, 1000);
+}
+
 function createSmokeVideoTexture(instanceIndex = 0) {
   const preloadMode = isCoarsePointer() ? "metadata" : "auto";
   const video = document.createElement("video");
@@ -894,6 +911,8 @@ function animate() {
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }
+
+startFooterClock();
 
 Promise.all(placeholders.map(createItem)).then(() => {
   for (const item of items) {
