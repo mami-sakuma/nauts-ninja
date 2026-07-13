@@ -133,6 +133,7 @@ let lastFrameTime = performance.now();
 let activeSmokeItem = null;
 
 function createSmokeVideoTexture(instanceIndex = 0) {
+  const preloadMode = isCoarsePointer() ? "metadata" : "auto";
   const video = document.createElement("video");
   video.loop = true;
   video.muted = true;
@@ -140,11 +141,11 @@ function createSmokeVideoTexture(instanceIndex = 0) {
   video.defaultPlaybackRate = SMOKE_PLAYBACK_RATE;
   video.playbackRate = SMOKE_PLAYBACK_RATE;
   video.autoplay = false;
-  video.preload = "auto";
+  video.preload = preloadMode;
   video.crossOrigin = "anonymous";
   video.setAttribute("muted", "");
   video.setAttribute("playsinline", "");
-  video.setAttribute("preload", "auto");
+  video.setAttribute("preload", preloadMode);
   video.disablePictureInPicture = true;
   video.style.position = "fixed";
   video.style.left = "-9999px";
@@ -159,7 +160,9 @@ function createSmokeVideoTexture(instanceIndex = 0) {
   source.type = "video/mp4";
   video.appendChild(source);
   document.body.appendChild(video);
-  video.load();
+  if (preloadMode === "auto") {
+    video.load();
+  }
 
   const texture = new THREE.VideoTexture(video);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -766,8 +769,10 @@ async function createItem(placeholder, index) {
   placeholder.tabIndex = 0;
 
   items.push(item);
-  preloadHoverImage(item);
-  preloadFinalImage(item);
+  if (!isCoarsePointer()) {
+    preloadHoverImage(item);
+    preloadFinalImage(item);
+  }
 }
 
 function resetSmokeItem(item) {
