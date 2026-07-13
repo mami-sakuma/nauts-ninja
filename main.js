@@ -792,9 +792,11 @@ function animate() {
   const now = performance.now();
   const delta = Math.min(now - lastFrameTime, 64);
   lastFrameTime = now;
+  let shouldSyncActiveSmoke = false;
 
   for (const item of items) {
     if (item.target === 1) {
+      shouldSyncActiveSmoke = true;
       item.visualElapsed += delta;
     } else {
       item.visualElapsed = 0;
@@ -878,6 +880,10 @@ function animate() {
         resetSmokeItem(item);
       }
     }
+  }
+
+  if (shouldSyncActiveSmoke) {
+    syncMeshesToDom();
   }
 
   renderer.render(scene, camera);
